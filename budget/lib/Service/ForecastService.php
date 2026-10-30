@@ -535,6 +535,13 @@ class ForecastService {
 		// Rows dated after today, until the last month projected
 		$lastProjected = BudgetPeriod::range(self::shiftMonth($thisMonth, $forecastMonths), $monthStartDay)[1];
 		$tomorrow = (new \DateTimeImmutable($today))->modify('+1 day')->format('Y-m-d');
+		// The share of the running month still to come. Its scheduled items
+		// and this share of the usual income and spending count in the first
+		// month projected: today's balance holds none of them yet. With a
+		// budget start day the running month can have most of its days left.
+		[$thisStart, $thisEnd] = BudgetPeriod::range($thisMonth, $monthStartDay);
+		$restOfThisMonth = $tomorrow > $thisEnd ? 0.0
+			: self::days($tomorrow, $thisEnd) / self::days($thisStart, $thisEnd);
 		$futureRows = $this->futureRows($userId, $tomorrow, $lastProjected, $visibleAccountIds, $rates);
 
 		// Generate monthly projections
@@ -560,6 +567,10 @@ class ForecastService {
 
 			$projectedIncome = max(0, $variableIncome + ($variableIncomeTrend * $i)) + $scheduledIncome;
 			$projectedExpenses = max(0, $variableExpenses + ($variableExpenseTrend * $i)) + $scheduledExpenses;
+			if ($i === 1) {
+				$projectedIncome += max(0, $variableIncome) * $restOfThisMonth;
+				$projectedExpenses += max(0, $variableExpenses) * $restOfThisMonth;
+			}
 			$monthlySavings = $projectedIncome - $projectedExpenses;
 
 			$projectedBalance += $monthlySavings;
@@ -623,6 +634,13 @@ class ForecastService {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Days from one date to another, both included.
+	 */
+	private static function days(string $from, string $to): int {
+		return (int)(new \DateTimeImmutable($from))->diff(new \DateTimeImmutable($to))->days + 1;
 	}
 
 	/**
