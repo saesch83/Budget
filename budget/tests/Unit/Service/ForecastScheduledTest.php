@@ -170,8 +170,9 @@ class ForecastScheduledTest extends TestCase {
 		$months = $this->forecast(3)['monthlyProjections'];
 
 		// Salary and rent on their dates, the other 1,000 a month averaged
+		// (the first month also carries October's last day: 1,000 / 31)
 		$this->assertSame([3000.0, 3000.0, 3000.0], array_column($months, 'income'));
-		$this->assertSame([1900.0, 1900.0, 1900.0], array_column($months, 'expenses'));
+		$this->assertSame([1932.26, 1900.0, 1900.0], array_column($months, 'expenses'));
 	}
 
 	public function testANewBillCountsFromItsFirstDate(): void {
@@ -201,6 +202,19 @@ class ForecastScheduledTest extends TestCase {
 		$months = $this->forecast(2)['monthlyProjections'];
 
 		$this->assertSame([240.0, 120.0], array_column($months, 'scheduledExpenses'));
+	}
+
+	public function testTheRestOfTheRunningMonthCountsInTheFirstMonth(): void {
+		$this->steadyHistory();
+		$this->bill('Rent', 900.0, 'monthly', ['2026-11-01', '2026-12-01']);
+		$this->income(3000.0, 'monthly', 26, null, 'SALARY');
+
+		$months = $this->forecast(2)['monthlyProjections'];
+
+		// 30 October: 1 of October's 31 days to come, so a 31st of the
+		// usual 1,000 spending on top of November's
+		$this->assertEqualsWithDelta(1000.0 / 31 + 1900.0, $months[0]['expenses'], 0.01);
+		$this->assertSame(1900.0, $months[1]['expenses']);
 	}
 
 	public function testAPaymentMadeAheadOfItsDateIsNotCountedAgain(): void {
