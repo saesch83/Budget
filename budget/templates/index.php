@@ -605,6 +605,7 @@ style('budget', 'budget-app');
                             <canvas id="trend-chart"></canvas>
                         </div>
                         <div id="trend-chart-legend" class="chart-legend"></div>
+                        <p class="month-grouping-note" style="display: none;"></p>
                     </div>
 
                     <!-- Spending by Category Chart -->
@@ -3076,6 +3077,7 @@ style('budget', 'budget-app');
                 <div class="empty-icon">📊</div>
                 <h3><?php p($l->t('Not Enough Data')); ?></h3>
                 <p><?php p($l->t('Add more transactions to generate an accurate forecast. We need at least 1 month of transaction history.')); ?></p>
+                <p><?php p($l->t('Only complete months count: a month your accounts\' history only partly covers, such as the first month a bank sync fetched, is left out.')); ?></p>
             </div>
 
             <!-- Balance Overview Cards -->
@@ -3160,6 +3162,7 @@ style('budget', 'budget-app');
                     <span class="quality-value" id="forecast-confidence">--</span>
                     <span class="quality-info" id="data-info">--</span>
                 </div>
+                <p id="forecast-month-note" class="month-grouping-note" style="display: none;"></p>
             </div>
         </div>
         
@@ -3324,6 +3327,7 @@ style('budget', 'budget-app');
                         <div class="chart-container chart-container-large">
                             <canvas id="report-trend-chart"></canvas>
                         </div>
+                        <p id="report-trend-month-note" class="month-grouping-note" style="display: none;"></p>
                     </div>
 
                     <!-- Account Breakdown Table -->
@@ -3487,6 +3491,7 @@ style('budget', 'budget-app');
                         <div class="chart-container chart-container-large">
                             <canvas id="report-cashflow-chart"></canvas>
                         </div>
+                        <p id="report-cashflow-month-note" class="month-grouping-note" style="display: none;"></p>
                     </div>
 
                     <!-- Cash Flow Table -->
@@ -3709,6 +3714,7 @@ style('budget', 'budget-app');
                             </div>
                         </div>
                         <p class="report-hint"><?php p($l->t('Income is shown positive, expenses negative. Parent categories include the totals of their sub-categories.')); ?></p>
+                        <p id="category-monthly-month-note" class="month-grouping-note" style="display: none;"></p>
                         <div id="category-monthly-table">
                             <!-- Matrix rendered by JavaScript -->
                         </div>
@@ -4463,6 +4469,17 @@ style('budget', 'budget-app');
                             </label>
                             <input type="number" id="setting-budget-start-day" class="setting-input"
                                    min="1" max="31" step="1" value="1">
+                        </div>
+
+                        <div class="setting-item">
+                            <label for="setting-report-month-grouping">
+                                <strong><?php p($l->t('Months in dashboard charts and reports')); ?></strong>
+                                <small><?php p($l->t('With a budget cycle start day other than 1, choose whether the dashboard charts and the month-by-month reports count calendar months or your budget months. With budget months, money that arrives on or after the start day counts towards the next month, like on the Budget page.')); ?></small>
+                            </label>
+                            <select id="setting-report-month-grouping" class="setting-input">
+                                <option value="calendar"><?php p($l->t('Calendar months')); ?></option>
+                                <option value="budget"><?php p($l->t('Budget months')); ?></option>
+                            </select>
                         </div>
 
                         <div class="setting-item">
@@ -7574,6 +7591,7 @@ style('budget', 'budget-app');
                 <select id="bank-sync-provider">
                     <option value=""><?php p($l->t('Select a provider...')); ?></option>
                     <option value="gocardless"><?php p($l->t('GoCardless (UK/Europe)')); ?></option>
+                    <option value="enablebanking"><?php p($l->t('Enable Banking (Europe)')); ?></option>
                     <option value="simplefin"><?php p($l->t('SimpleFIN Bridge (US)')); ?></option>
                 </select>
             </div>
@@ -7605,6 +7623,31 @@ style('budget', 'budget-app');
                 <small class="form-text"><?php p($l->t('Get API keys from bankaccountdata.gocardless.com')); ?></small>
             </div>
 
+            <!-- Enable Banking fields -->
+            <div id="enablebanking-fields" style="display: none;">
+                <div id="bank-sync-eb-keys-stored" class="form-text" style="display: none;">
+                    <?php p($l->t('Your Enable Banking keys are stored.')); ?>
+                    <a href="#" id="bank-sync-eb-replace-keys"><?php p($l->t('Replace keys')); ?></a>
+                </div>
+                <div id="bank-sync-eb-key-inputs">
+                    <div class="form-group">
+                        <label for="bank-sync-eb-application-id"><?php p($l->t('Application ID')); ?></label>
+                        <input type="text" id="bank-sync-eb-application-id" placeholder="<?php p($l->t('Your Enable Banking application ID')); ?>" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="bank-sync-eb-private-key"><?php p($l->t('Private Key (PEM)')); ?></label>
+                        <textarea id="bank-sync-eb-private-key" rows="5" placeholder="-----BEGIN PRIVATE KEY-----" autocomplete="off" spellcheck="false"></textarea>
+                        <input type="file" id="bank-sync-eb-private-key-file" accept=".pem,.key,text/plain" aria-label="<?php p($l->t('Load private key from file')); ?>">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="bank-sync-eb-callback-url"><?php p($l->t('Redirect URL to register in Enable Banking')); ?></label>
+                    <input type="text" id="bank-sync-eb-callback-url" readonly>
+                    <button type="button" class="secondary" id="bank-sync-eb-copy-callback"><?php p($l->t('Copy')); ?></button>
+                </div>
+                <small class="form-text"><?php p($l->t('Register an application and create its keys at')); ?> <a href="https://enablebanking.com/docs/" target="_blank" rel="noopener">enablebanking.com/docs</a></small>
+            </div>
+
             <div id="bank-sync-step1-error" class="bank-sync-error" style="display: none;"></div>
 
             <div class="modal-buttons">
@@ -7613,7 +7656,7 @@ style('budget', 'budget-app');
             </div>
         </div>
 
-        <!-- Step 2: Select Institution (GoCardless only) -->
+        <!-- Step 2: Select Institution (GoCardless and Enable Banking) -->
         <div id="bank-sync-step-2" class="bank-sync-step" style="display: none;">
             <h3><?php p($l->t('Select Your Bank')); ?></h3>
 
@@ -7645,8 +7688,9 @@ style('budget', 'budget-app');
             <h3><?php p($l->t('Authorize with Your Bank')); ?></h3>
 
             <div class="bank-sync-auth-status">
-                <p><?php p($l->t('A new window has been opened for you to authorize access at your bank.')); ?></p>
-                <p><?php p($l->t('Once you have completed the authorization, click the button below.')); ?></p>
+                <p id="bank-sync-auth-text-eb" style="display: none;"><?php p($l->t('Confirm in your bank\'s app. When the new tab says \'Connected\', come back here.')); ?></p>
+                <p class="bank-sync-auth-text-default"><?php p($l->t('A new window has been opened for you to authorize access at your bank.')); ?></p>
+                <p class="bank-sync-auth-text-default"><?php p($l->t('Once you have completed the authorization, click the button below.')); ?></p>
                 <p id="bank-sync-auth-link-fallback" style="display: none;">
                     <?php p($l->t('If the window did not open, ')); ?>
                     <a id="bank-sync-auth-link" href="#" target="_blank" rel="noopener"><?php p($l->t('click here to authorize')); ?></a>.

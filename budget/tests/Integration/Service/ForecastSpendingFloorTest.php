@@ -6,16 +6,17 @@ namespace OCA\Budget\Tests\Integration\Service;
 
 use OCA\Budget\Service\Forecast\ForecastWarningService;
 use OCA\Budget\Service\ForecastService;
+use OCA\Budget\Service\UserClock;
 use OCA\Budget\Tests\Integration\IntegrationTestCase;
 
 /**
  * Projected spending follows its trend only upwards: a falling trend is
  * projected as the average of the complete months the forecast learns
- * from, and never below the bills. The forecast is there to warn before
- * money runs out, so it errs on spending more. Followed down, a line
+ * from. The forecast is there to warn before money runs out, so it errs on
+ * spending more. Followed down, a line
  * through three uneven months (1,060, 11 and 131) projected next to no
  * spending, and a reliable-looking forecast showed six months of income
- * saved whole.
+ * saved whole. Bills come on top of the average, on their own dates.
  */
 class ForecastSpendingFloorTest extends IntegrationTestCase {
 	private int $account;
@@ -32,7 +33,7 @@ class ForecastSpendingFloorTest extends IntegrationTestCase {
 
 		$this->assertTrue($forecast['dataQuality']['isReliable']);
 		// (1,060 + 11 + 131) / 3
-		$this->assertSame(array_fill(0, 6, 400.67), array_column($forecast['monthlyProjections'], 'expenses'));
+		$this->assertSame($this->withRestOfThisMonth(array_fill(0, 6, 400.67), 400.67), array_column($forecast['monthlyProjections'], 'expenses'));
 		// The history's own direction is still shown as it is
 		$this->assertSame('down', $forecast['trends']['expenseDirection']);
 	}
@@ -40,16 +41,17 @@ class ForecastSpendingFloorTest extends IntegrationTestCase {
 	public function testARisingTrendIsFollowed(): void {
 		$this->history(['300.00', '400.00', '500.00']);
 
-		$this->assertSame([500.0, 600.0, 700.0, 800.0, 900.0, 1000.0], array_column($this->forecast()['monthlyProjections'], 'expenses'));
+		// The rest of this month at the average (400), not on the trend
+		$this->assertSame($this->withRestOfThisMonth([500.0, 600.0, 700.0, 800.0, 900.0, 1000.0], 400.0), array_column($this->forecast()['monthlyProjections'], 'expenses'));
 	}
 
 	public function testASteadyHistoryIsProjectedAtItsAverage(): void {
 		$this->history(['400.00', '410.00', '390.00']);
 
-		$this->assertSame(array_fill(0, 6, 400.0), array_column($this->forecast()['monthlyProjections'], 'expenses'));
+		$this->assertSame($this->withRestOfThisMonth(array_fill(0, 6, 400.0), 400.0), array_column($this->forecast()['monthlyProjections'], 'expenses'));
 	}
 
-	public function testBillsAboveTheAverageAreTheFloor(): void {
+	public function testBillsComeOnTopOnTheirDates(): void {
 		$this->history(['1060.00', '11.00', '131.00']);
 		$this->insertRow('budget_bills', [
 			'user_id' => $this->userId, 'name' => 'Rent', 'amount' => '450.00', 'frequency' => 'monthly',
@@ -60,8 +62,13 @@ class ForecastSpendingFloorTest extends IntegrationTestCase {
 			'account_id' => $this->account, 'is_active' => true, 'created_at' => $this->now(), 'due_day' => 5, 'due_month' => 3,
 		]);
 
-		// 450 a month and 600 a year
-		$this->assertSame(array_fill(0, 6, 500.0), array_column($this->forecast()['monthlyProjections'], 'expenses'));
+		// Not paid from the history yet, so new: the average (400.67) and
+		// rent every month, the yearly insurance in March only
+		$months = array_slice($this->forecast()['monthlyProjections'], 1);
+		// From the second month: the first also carries what is left of this
+		// one, rent included or not depending on the day
+		$expected = array_map(static fn (string $m) => substr($m, 5, 2) === '03' ? 1450.67 : 850.67, array_column($months, 'yearMonth'));
+		$this->assertSame($expected, array_column($months, 'expenses'));
 	}
 
 	public function testFallingSpendingThatStillOutrunsIncomeWarns(): void {
@@ -72,8 +79,10 @@ class ForecastSpendingFloorTest extends IntegrationTestCase {
 		$this->db()->executeStatement('UPDATE *PREFIX*budget_accounts SET balance = ? WHERE id = ?', ['1000.00', $this->account]);
 
 		$balances = array_column($this->forecast()['monthlyProjections'], 'balance');
-		$this->assertEqualsWithDelta(400.0, $balances[0], 0.1);
-		$this->assertEqualsWithDelta(-200.0, $balances[1], 0.1);
+		// 600 a month more out than in, and the rest of this month's share
+		$first = 1000.0 - 600.0 * (1 + $this->restOfThisMonth());
+		$this->assertEqualsWithDelta($first, $balances[0], 0.1);
+		$this->assertEqualsWithDelta($first - 600.0, $balances[1], 0.1);
 
 		$this->assertTrue($this->service(ForecastWarningService::class)->checkAndNotify($this->userId));
 	}
@@ -98,5 +107,28 @@ class ForecastSpendingFloorTest extends IntegrationTestCase {
 			$this->makeTransaction($this->account, ['amount' => '0.01', 'type' => 'credit', 'date' => $month->format('Y-m-11')]);
 			$this->makeTransaction($this->account, ['amount' => '0.01', 'type' => 'credit', 'date' => $month->format('Y-m-12')]);
 		}
+	}
+
+	/**
+	 * The share of this month still to come after today, on the user's
+	 * calendar as the forecast reads it: its first month projected also
+	 * carries this share of the usual income and spending.
+	 */
+	private function restOfThisMonth(): float {
+		$today = new \DateTimeImmutable($this->service(UserClock::class)->today($this->userId));
+		$days = (int)$today->format('t');
+		return ($days - (int)$today->format('j')) / $days;
+	}
+
+	/**
+	 * Monthly figures with the first one carrying the rest of this month's
+	 * share of $average, as the forecast adds it.
+	 *
+	 * @param float[] $monthly
+	 * @return float[]
+	 */
+	private function withRestOfThisMonth(array $monthly, float $average): array {
+		$monthly[0] = round($monthly[0] + $average * $this->restOfThisMonth(), 2);
+		return $monthly;
 	}
 }

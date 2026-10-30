@@ -6,6 +6,7 @@ namespace OCA\Budget\Tests\Integration\Service;
 
 use OCA\Budget\Service\Forecast\ForecastWarningService;
 use OCA\Budget\Service\ForecastService;
+use OCA\Budget\Service\UserClock;
 use OCA\Budget\Tests\Integration\IntegrationTestCase;
 
 /**
@@ -39,9 +40,14 @@ class ForecastHistoryTest extends IntegrationTestCase {
 
 		$forecast = $this->service(ForecastService::class)->getLiveForecast($this->userId, 6);
 
+		$rest = $this->restOfThisMonth();
 		$this->assertSame(array_fill(0, 6, 3100.0), array_column($forecast['monthlyProjections'], 'income'));
-		$this->assertSame(array_fill(0, 6, 2000.0), array_column($forecast['monthlyProjections'], 'expenses'));
-		$this->assertEqualsWithDelta(3925.0 + 6 * 1100.0, $forecast['projectedBalance'], 0.001);
+		// The first month also carries the rest of this one's spending
+		$this->assertSame(
+			[round(2000.0 * (1 + $rest), 2), ...array_fill(0, 5, 2000.0)],
+			array_column($forecast['monthlyProjections'], 'expenses')
+		);
+		$this->assertEqualsWithDelta(3925.0 + 6 * 1100.0 - 2000.0 * $rest, $forecast['projectedBalance'], 0.01);
 		$this->assertSame(1, $forecast['dataQuality']['monthsOfData']);
 		$this->assertFalse($forecast['dataQuality']['isReliable']);
 	}
@@ -64,7 +70,9 @@ class ForecastHistoryTest extends IntegrationTestCase {
 
 		$forecast = $this->service(ForecastService::class)->getLiveForecast($this->userId, 6);
 		$this->assertTrue($forecast['dataQuality']['isReliable']);
-		$this->assertSame([400.0, -200.0], array_slice(array_column($forecast['monthlyProjections'], 'balance'), 0, 2));
+		// 600 a month more out than in, and the rest of this month's share
+		$first = round(1000.0 - 600.0 * (1 + $this->restOfThisMonth()), 2);
+		$this->assertSame([$first, round($first - 600.0, 2)], array_slice(array_column($forecast['monthlyProjections'], 'balance'), 0, 2));
 
 		$this->assertTrue($this->service(ForecastWarningService::class)->checkAndNotify($this->userId));
 	}
@@ -82,6 +90,8 @@ class ForecastHistoryTest extends IntegrationTestCase {
 		foreach ($forecast['monthlyProjections'] as $month) {
 			$this->assertGreaterThanOrEqual(3100.0, $month['income'], $month['yearMonth']);
 		}
+		// The bonus stopped: it is not carried on as if it still came
+		$this->assertLessThan(5100.0, $forecast['monthlyProjections'][1]['income']);
 	}
 
 	/**
@@ -110,5 +120,16 @@ class ForecastHistoryTest extends IntegrationTestCase {
 			'UPDATE *PREFIX*budget_accounts SET balance = ? WHERE id = ?',
 			[number_format($balance, 2, '.', ''), $this->account]
 		);
+	}
+
+	/**
+	 * The share of this month still to come after today, on the user's
+	 * calendar as the forecast reads it: its first month projected also
+	 * carries this share of the usual income and spending.
+	 */
+	private function restOfThisMonth(): float {
+		$today = new \DateTimeImmutable($this->service(UserClock::class)->today($this->userId));
+		$days = (int)$today->format('t');
+		return ($days - (int)$today->format('j')) / $days;
 	}
 }
