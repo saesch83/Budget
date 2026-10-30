@@ -64,9 +64,9 @@ class ForecastSpendingFloorTest extends IntegrationTestCase {
 
 		// Not paid from the history yet, so new: the average (400.67) and
 		// rent every month, the yearly insurance in March only
-		$months = array_slice($this->forecast()['monthlyProjections'], 1);
-		// From the second month: the first also carries what is left of this
-		// one, rent included or not depending on the day
+		// The months after this one: what is left of this one has rent
+		// in it or not depending on the day
+		$months = $this->fullMonths($this->forecast());
 		$expected = array_map(static fn (string $m) => substr($m, 5, 2) === '03' ? 1450.67 : 850.67, array_column($months, 'yearMonth'));
 		$this->assertSame($expected, array_column($months, 'expenses'));
 	}
@@ -78,8 +78,8 @@ class ForecastSpendingFloorTest extends IntegrationTestCase {
 		$this->history(['3000.00', '2600.00', '2200.00'], '2000.00');
 		$this->db()->executeStatement('UPDATE *PREFIX*budget_accounts SET balance = ? WHERE id = ?', ['1000.00', $this->account]);
 
-		$balances = array_column($this->forecast()['monthlyProjections'], 'balance');
-		// 600 a month more out than in, and the rest of this month's share
+		$balances = array_column($this->fullMonths($this->forecast()), 'balance');
+		// 600 a month more out than in, after the rest of this month's share
 		$first = 1000.0 - 600.0 * (1 + $this->restOfThisMonth());
 		$this->assertEqualsWithDelta($first, $balances[0], 0.1);
 		$this->assertEqualsWithDelta($first - 600.0, $balances[1], 0.1);
@@ -89,6 +89,11 @@ class ForecastSpendingFloorTest extends IntegrationTestCase {
 
 	private function forecast(): array {
 		return $this->service(ForecastService::class)->getLiveForecast($this->userId, 6);
+	}
+
+	/** The months projected after this one, without what is left of it */
+	private function fullMonths(array $forecast): array {
+		return array_values(array_filter($forecast['monthlyProjections'], static fn (array $m) => !$m['partial']));
 	}
 
 	/**
@@ -111,8 +116,8 @@ class ForecastSpendingFloorTest extends IntegrationTestCase {
 
 	/**
 	 * The share of this month still to come after today, on the user's
-	 * calendar as the forecast reads it: its first month projected also
-	 * carries this share of the usual income and spending.
+	 * calendar as the forecast reads it: what is left of this month
+	 * comes first, with this share of the usual income and spending.
 	 */
 	private function restOfThisMonth(): float {
 		$today = new \DateTimeImmutable($this->service(UserClock::class)->today($this->userId));
@@ -121,14 +126,14 @@ class ForecastSpendingFloorTest extends IntegrationTestCase {
 	}
 
 	/**
-	 * Monthly figures with the first one carrying the rest of this month's
-	 * share of $average, as the forecast adds it.
+	 * Monthly figures after the rest of this month's share of $average,
+	 * which comes first unless today is the month's last day.
 	 *
 	 * @param float[] $monthly
 	 * @return float[]
 	 */
 	private function withRestOfThisMonth(array $monthly, float $average): array {
-		$monthly[0] = round($monthly[0] + $average * $this->restOfThisMonth(), 2);
-		return $monthly;
+		$rest = $this->restOfThisMonth();
+		return $rest > 0 ? [round($average * $rest, 2), ...$monthly] : $monthly;
 	}
 }

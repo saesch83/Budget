@@ -1644,6 +1644,7 @@ OC.L10N.register(
     "_%n category hidden_::_%n categories hidden_" : ["%n Kategorie ausgeblendet","%n Kategorien ausgeblendet"],
     "Total Spending" : "Gesamtausgaben",
     "{month} (so far)" : "{month} (bisher)",
+    "{month} (rest)" : "{month} (Rest)",
     "Liabilities" : "Verbindlichkeiten",
     "Asset Value" : "Vermögenswert",
     "Portfolio" : "Portfolio",
